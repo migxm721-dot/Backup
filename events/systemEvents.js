@@ -22,17 +22,22 @@ function addDisconnectGraceTimer(userId, username, roomId, duration = DISCONNECT
   const timer = setTimeout(async () => {
     console.log(`⏰ Grace period expired for ${username} (${userId}), cleaning up...`);
     
-    // Remove from room after grace period expires
-    if (roomId) {
-      await presence.removeUserFromRoom(roomId, userId, username);
+    try {
+      // Remove from room after grace period expires
+      if (roomId) {
+        await presence.removeUserFromRoom(roomId, userId, username);
+      }
+      
+      // Set user as offline
+      await setPresence(username, 'offline').catch(err => {
+        console.warn(`Failed to set offline presence for ${username}:`, err.message);
+      });
+    } catch (error) {
+      console.error(`Error during grace period cleanup for ${username}:`, error.message);
+    } finally {
+      // Always delete timer from map, even if cleanup fails
+      disconnectGraceTimers.delete(userId);
     }
-    
-    // Set user as offline
-    await setPresence(username, 'offline').catch(err => {
-      console.warn(`Failed to set offline presence for ${username}:`, err.message);
-    });
-    
-    disconnectGraceTimers.delete(userId);
   }, duration);
   
   disconnectGraceTimers.set(userId, { timer, username, roomId, startedAt: Date.now() });

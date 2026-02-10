@@ -36,7 +36,7 @@ const chatEvents = require('./events/chatEvents');
 const pmEvents = require('./events/pmEvents');
 const giftEvents = require('./events/giftEvents');
 const systemEvents = require('./events/systemEvents');
-const { cancelDisconnectTimer } = require('./events/systemEvents');
+const { cancelDisconnectTimer, addDisconnectGraceTimer, DISCONNECT_GRACE_PERIOD } = require('./events/systemEvents');
 const creditEvents = require('./events/creditEvents');
 const merchantEvents = require('./events/merchantEvents');
 const notificationEvents = require('./events/notificationEvents');
@@ -602,11 +602,11 @@ chatNamespace.on('connection', (socket) => {
     }
     
     // Start grace period timer - user stays in room for 30 minutes
-    const { addDisconnectGraceTimer, DISCONNECT_GRACE_PERIOD } = require('./events/systemEvents');
     const currentRoom = socket.currentRoomId;
+    const GRACE_PERIOD_MINUTES = DISCONNECT_GRACE_PERIOD / 60000;
     
     if (currentRoom) {
-      console.log(`⏱️  User ${username} disconnected from room ${currentRoom}, starting ${DISCONNECT_GRACE_PERIOD / 60000} minute grace period`);
+      console.log(`⏱️  User ${username} disconnected from room ${currentRoom}, starting ${GRACE_PERIOD_MINUTES} minute grace period`);
       addDisconnectGraceTimer(userId, username, currentRoom, DISCONNECT_GRACE_PERIOD);
       
       // DO NOT broadcast "has left" on disconnect - only on explicit leave

@@ -4,6 +4,19 @@ const logger = require('../utils/logger');
 const { getRoomParticipants } = require('../utils/redisUtils');
 const { getUserLevel } = require('../utils/xpLeveling');
 
+/**
+ * Helper function to broadcast "has entered" message
+ */
+const broadcastUserEntered = (socket, roomId, username, userId, userCount) => {
+  socket.to(`room:${roomId}`).emit('room:userEntered', {
+    username,
+    userId,
+    message: `${username} has entered the chat`,
+    userCount,
+    timestamp: new Date().toISOString()
+  });
+};
+
 module.exports = (io, socket) => {
   /**
    * Handle explicit room join - broadcasts "has entered" on first join only
@@ -19,8 +32,13 @@ module.exports = (io, socket) => {
       
       logger.info(`[Room Join] ${username} (${userId}) joining room ${roomId}`);
       
-      // Check if this is first join (not a rejoin)
-      const isFirstJoin = !socket.hasJoinedRoom || socket.hasJoinedRoom !== roomId;
+      // Initialize joinedRooms Set if not exists
+      if (!socket.joinedRooms) {
+        socket.joinedRooms = new Set();
+      }
+      
+      // Check if this is first join to this specific room
+      const isFirstJoin = !socket.joinedRooms.has(roomId);
       
       // Validate room access
       const result = await roomService.joinRoom(roomId, userId, username);
@@ -33,7 +51,7 @@ module.exports = (io, socket) => {
       // Join socket.io room
       socket.join(`room:${roomId}`);
       socket.currentRoomId = roomId;
-      socket.hasJoinedRoom = roomId; // Track first join
+      socket.joinedRooms.add(roomId); // Track this room as joined
       
       const userCount = await presence.getRoomUserCount(roomId);
       const participants = await getRoomParticipants(roomId);
@@ -53,13 +71,7 @@ module.exports = (io, socket) => {
       // Broadcast "has entered" ONLY on first join (not reconnect)
       if (isFirstJoin) {
         logger.info(`[Room Join] First join - broadcasting "${username} has entered"`);
-        socket.to(`room:${roomId}`).emit('room:userEntered', {
-          username,
-          userId,
-          message: `${username} has entered the chat`,
-          userCount,
-          timestamp: new Date().toISOString()
-        });
+        broadcastUserEntered(socket, roomId, username, userId, userCount);
       } else {
         logger.info(`[Room Join] Silent rejoin - no broadcast for ${username}`);
       }
@@ -117,13 +129,7 @@ module.exports = (io, socket) => {
       
       // NO broadcast message if silent=true (default)
       if (!silent) {
-        socket.to(`room:${roomId}`).emit('room:userEntered', {
-          username,
-          userId,
-          message: `${username} has entered the chat`,
-          userCount,
-          timestamp: new Date().toISOString()
-        });
+        broadcastUserEntered(socket, roomId, username, userId, userCount);
       }
       
       // Silently update user list
@@ -159,8 +165,8 @@ module.exports = (io, socket) => {
       await roomService.leaveRoom(roomId, userId, username);
       
       // Clear first-join tracking
-      if (socket.hasJoinedRoom === roomId) {
-        delete socket.hasJoinedRoom;
+      if (socket.joinedRooms) {
+        socket.joinedRooms.delete(roomId);
       }
       socket.currentRoomId = null;
       
