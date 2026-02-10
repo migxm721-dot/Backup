@@ -281,6 +281,20 @@ const systemEventsHandler = (io, socket) => {
       const actualUsername = username || socket.username;
 
       if (actualUserId && actualUsername) {
+        // Fix #3: Check if user has reconnected before processing logout
+        // This prevents logout from completing if user reconnected during grace period
+        try {
+          const chatSockets = await io.fetchSockets();
+          for (const s of chatSockets) {
+            if (String(s.userId) === String(actualUserId) && s.id !== socket.id) {
+              logger.info(`✅ ${actualUsername} has active connection (${s.id}) - aborting logout`);
+              return;
+            }
+          }
+        } catch (checkErr) {
+          logger.warn(`⚠️ Could not check active connections for ${actualUsername}: ${checkErr.message}`);
+        }
+
         // Idempotency guard - prevent duplicate logout processing
         if (socket._logoutProcessed) {
           logger.info(`⏩ Skipping duplicate logout for ${actualUsername} - already processed`);
@@ -316,6 +330,9 @@ const systemEventsHandler = (io, socket) => {
           for (const roomId of allRoomIds) {
             logger.info(`🚪 Force leaving room ${roomId} for user ${actualUsername}`);
             
+            // Fix #2: Remove socket from Socket.IO room BEFORE Redis cleanup
+            socket.leave(`room:${roomId}`);
+            
             // Use common leave logic
             await removeUserFromRoom(roomId, actualUsername);
             await removeRoomParticipant(roomId, actualUsername);
@@ -350,7 +367,7 @@ const systemEventsHandler = (io, socket) => {
             });
             
             // Updated participants list
-            const updatedParticipants = await redis.sMembers(`room:participants:${roomId}`);
+            const updatedParticipants = await redis.sMembers(`room:${roomId}:participants`);
             io.to(`room:${roomId}`).emit('room:participants:update', {
               roomId,
               participants: updatedParticipants
@@ -405,16 +422,16 @@ const systemEventsHandler = (io, socket) => {
       const graceTimer = setTimeout(async () => {
         disconnectGraceTimers.delete(timerKey);
 
+        // Fix #3: Check ALL namespaces for reconnection (not just main namespace)
         let reconnected = false;
         try {
-          const sockets = io.sockets;
-          if (sockets && sockets instanceof Map) {
-            for (const [sid, s] of sockets) {
-              if (String(s.userId) === String(actualUserId)) {
-                reconnected = true;
-                logger.info(`✅ ${actualUsername} reconnected (socket: ${sid}) - skipping cleanup`);
-                break;
-              }
+          // Check if user has reconnected in ANY namespace
+          const chatSockets = await io.fetchSockets();
+          for (const s of chatSockets) {
+            if (String(s.userId) === String(actualUserId)) {
+              reconnected = true;
+              logger.info(`✅ ${actualUsername} reconnected (socket: ${s.id}) - skipping cleanup`);
+              break;
             }
           }
         } catch (checkErr) {
@@ -422,6 +439,7 @@ const systemEventsHandler = (io, socket) => {
         }
 
         if (reconnected) {
+          logger.info(`✅ ${actualUsername} reconnected during grace period - aborting cleanup`);
           return;
         }
 

@@ -1459,6 +1459,8 @@ module.exports = (io, socket) => {
 
       const room = await roomService.getRoomById(roomId);
       if (!room) {
+        // Fix #2: Remove socket from room if validation fails
+        socket.leave(`room:${roomId}`);
         socket.emit('error', { message: 'Room not found' });
         return;
       }

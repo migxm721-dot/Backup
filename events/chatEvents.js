@@ -26,52 +26,67 @@ module.exports = (io, socket) => {
         return;
       }
 
-      // Check if user is actually in the room
-      const presence = require('../utils/presence');
-      const isInRoom = await presence.isUserInRoom(roomId, userId, username);
-      if (!isInRoom) {
-        // Check if user was kicked (even if TTL expired, don't auto-rejoin kicked users)
-        const { getRedisClient } = require('../redis');
-        const redisCheck = getRedisClient();
-        const wasKicked = await redisCheck.exists(`kick:${roomId}:${userId}`);
-        
-        // Also check if socket is actually in the Socket.IO room
-        const socketRooms = socket.rooms;
-        const isInSocketRoom = socketRooms.has(`room:${roomId}`);
-        
-        if (wasKicked) {
-          const ttl = await redisCheck.ttl(`kick:${roomId}:${userId}`);
-          const minutes = Math.ceil(ttl / 60);
-          socket.emit('system:message', {
-            roomId,
-            message: `You have been kicked from this room. Please wait ${minutes} minute(s) before you can chat again.`,
-            timestamp: new Date().toISOString(),
-            type: 'error'
-          });
-          socket.leave(`room:${roomId}`);
-          return;
-        }
-        
-        if (!isInSocketRoom) {
-          // User is not in the room and was not auto-disconnected - require rejoin
-          socket.emit('system:message', {
-            roomId,
-            message: `You are no longer in this room. Please rejoin to send messages.`,
-            timestamp: new Date().toISOString(),
-            type: 'error'
-          });
-          socket.emit('room:force-leave', {
-            roomId,
-            message: 'You need to rejoin this room.'
-          });
-          return;
-        }
-        
-        // Socket is in room but presence is stale - silently fix presence
-        logger.info(`🔄 Fixing stale presence for ${username} in room ${roomId}`);
-        if (typeof presence.addUserToRoomDetailed === 'function') {
-          await presence.addUserToRoomDetailed(roomId, userId, username);
-        }
+      // Fix #1: Enforce invariant - user CAN send message ONLY IF all conditions are met
+      // 1. Socket is authenticated
+      if (!socket.userId || !socket.username) {
+        socket.emit('system:message', {
+          roomId,
+          message: 'Authentication required. Please login again.',
+          timestamp: new Date().toISOString(),
+          type: 'error'
+        });
+        return;
+      }
+
+      // 2. Socket is in Socket.IO room
+      const isInSocketRoom = socket.rooms.has(`room:${roomId}`);
+      if (!isInSocketRoom) {
+        socket.emit('system:message', {
+          roomId,
+          message: 'You are no longer in this room. Please rejoin to send messages.',
+          timestamp: new Date().toISOString(),
+          type: 'error'
+        });
+        socket.emit('room:force-leave', {
+          roomId,
+          message: 'You need to rejoin this room.'
+        });
+        return;
+      }
+
+      // 3. User is in Redis participants set (single source of truth for room membership)
+      const { getRedisClient } = require('../redis');
+      const redis = getRedisClient();
+      const isInParticipants = await redis.sIsMember(`room:${roomId}:participants`, username);
+      if (!isInParticipants) {
+        socket.emit('system:message', {
+          roomId,
+          message: 'You are no longer in this room. Please rejoin to send messages.',
+          timestamp: new Date().toISOString(),
+          type: 'error'
+        });
+        socket.emit('room:force-leave', {
+          roomId,
+          message: 'You need to rejoin this room.'
+        });
+        // Remove socket from Socket.IO room to maintain consistency
+        socket.leave(`room:${roomId}`);
+        return;
+      }
+
+      // 4. User is not banned/kicked from room
+      const wasKicked = await redis.exists(`kick:${roomId}:${userId}`);
+      if (wasKicked) {
+        const ttl = await redis.ttl(`kick:${roomId}:${userId}`);
+        const minutes = Math.ceil(ttl / 60);
+        socket.emit('system:message', {
+          roomId,
+          message: `You have been kicked from this room. Please wait ${minutes} minute(s) before you can chat again.`,
+          timestamp: new Date().toISOString(),
+          type: 'error'
+        });
+        socket.leave(`room:${roomId}`);
+        return;
       }
 
       const floodCheck = await checkFlood(username);
