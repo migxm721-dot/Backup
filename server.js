@@ -83,8 +83,9 @@ const io = new Server(server, {
     credentials: true
   },
   transports: ['polling', 'websocket'],
-  pingTimeout: 60000,
-  pingInterval: 25000,
+  // Mobile-optimized ping settings for Android 10-15
+  pingTimeout: 90000,      // 90 seconds - longer for mobile background
+  pingInterval: 30000,     // 30 seconds - balance between battery and connection
   allowUpgrades: true,
   upgradeTimeout: 30000,
   perMessageDeflate: false,
@@ -569,8 +570,24 @@ chatNamespace.on('connection', (socket) => {
   notificationEvents(io.of('/chat'), socket);
   chatListEvents(io.of('/chat'), socket);
 
+  // Standard ping-pong for connection monitoring
   socket.on('ping', () => {
     socket.emit('pong', { timestamp: Date.now() });
+  });
+  
+  // Custom heartbeat for mobile app tracking
+  socket.on('heartbeat', (data) => {
+    const { appState } = data || {};
+    socket.emit('heartbeat:ack', { 
+      timestamp: Date.now(),
+      gracePeriod: 1800000 // Inform client of 30-min grace period
+    });
+    
+    // Log app state changes for debugging
+    if (appState && appState !== socket.lastAppState) {
+      console.log(`📱 App state change for ${username}: ${socket.lastAppState || 'unknown'} -> ${appState}`);
+      socket.lastAppState = appState;
+    }
   });
 
   socket.on('error', (error) => {
@@ -582,6 +599,21 @@ chatNamespace.on('connection', (socket) => {
     const userKey = String(userId);
     if (userSocketMap.get(userKey) === socket.id) {
       userSocketMap.delete(userKey);
+    }
+    
+    // Start grace period timer - user stays in room for 30 minutes
+    const { addDisconnectGraceTimer, DISCONNECT_GRACE_PERIOD } = require('./events/systemEvents');
+    const currentRoom = socket.currentRoomId;
+    
+    if (currentRoom) {
+      console.log(`⏱️  User ${username} disconnected from room ${currentRoom}, starting ${DISCONNECT_GRACE_PERIOD / 60000} minute grace period`);
+      addDisconnectGraceTimer(userId, username, currentRoom, DISCONNECT_GRACE_PERIOD);
+      
+      // DO NOT broadcast "has left" on disconnect - only on explicit leave
+      // DO NOT remove from room - grace period keeps user in room
+    } else {
+      // User not in a room, just set offline after grace period
+      addDisconnectGraceTimer(userId, username, null, DISCONNECT_GRACE_PERIOD);
     }
   });
 });
