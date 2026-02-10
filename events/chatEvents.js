@@ -10,6 +10,7 @@ const { handleLowcardCommand } = require('./lowcardEvents');
 const { handleLegendCommand } = require('./legendEvents');
 const { handleDicebotCommand } = require('./dicebotEvents');
 const gameStateManager = require('../services/gameStateManager');
+const { getRedisClient } = require('../redis');
 
 module.exports = (io, socket) => {
   const sendMessage = async (data) => {
@@ -55,7 +56,6 @@ module.exports = (io, socket) => {
       }
 
       // 3. User is in Redis participants set (single source of truth for room membership)
-      const { getRedisClient } = require('../redis');
       const redis = getRedisClient();
       const isInParticipants = await redis.sIsMember(`room:${roomId}:participants`, username);
       if (!isInParticipants) {
