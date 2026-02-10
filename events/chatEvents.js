@@ -115,8 +115,6 @@ module.exports = (io, socket) => {
       }
 
       // Check if user or room is silenced
-      const { getRedisClient } = require('../redis');
-      const redis = getRedisClient();
       
       // Check room-wide silence (affects regular users, not admins/CS/moderators/room owners)
       const isRoomSilenced = await redis.exists(`room:silence:${roomId}`);
