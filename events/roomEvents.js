@@ -1,7 +1,7 @@
 const roomService = require('../services/roomService');
 const presence = require('../utils/presence');
 const logger = require('../utils/logger');
-const { getRoomUserCount, getRoomParticipants } = require('../utils/redisUtils');
+const { getRoomParticipants } = require('../utils/redisUtils');
 const { getUserLevel } = require('../utils/xpLeveling');
 
 module.exports = (io, socket) => {
@@ -35,7 +35,7 @@ module.exports = (io, socket) => {
       socket.currentRoomId = roomId;
       socket.hasJoinedRoom = roomId; // Track first join
       
-      const userCount = await getRoomUserCount(roomId);
+      const userCount = await presence.getRoomUserCount(roomId);
       const participants = await getRoomParticipants(roomId);
       
       // Get user level info
@@ -104,7 +104,7 @@ module.exports = (io, socket) => {
       socket.currentRoomId = roomId;
       // Don't reset hasJoinedRoom - this is a rejoin
       
-      const userCount = await getRoomUserCount(roomId);
+      const userCount = await presence.getRoomUserCount(roomId);
       const participants = await getRoomParticipants(roomId);
       
       // Emit success to the rejoining user
@@ -164,7 +164,7 @@ module.exports = (io, socket) => {
       }
       socket.currentRoomId = null;
       
-      const userCount = await getRoomUserCount(roomId);
+      const userCount = await presence.getRoomUserCount(roomId);
       const participants = await getRoomParticipants(roomId);
       
       // Emit success to leaving user
